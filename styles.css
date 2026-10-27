@@ -202,6 +202,12 @@ legend { font-weight: 700; margin-bottom: 8px; padding: 0; }
 .zones td { padding: 4px 0; border-bottom: 1px solid var(--border); }
 .zones td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .big-emoji { font-size: 3rem; }
+/* Zeitfelder: Std : Min : Sek */
+.tfield { margin: 0 0 12px; min-width: 0; }
+.tlabel { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 5px; }
+.tparts { display: flex; align-items: center; gap: 3px; }
+.tparts input { width: 3.1em; min-width: 0; flex: 0 1 3.1em; margin: 0; padding: 8px 2px; text-align: center; font-variant-numeric: tabular-nums; }
+.tparts span { font-weight: 700; color: var(--muted); }
 .splits { margin: -4px 0 12px; }
 .splits .trans { margin: -4px 0 0; }
 .splits-table { margin-top: 6px; }

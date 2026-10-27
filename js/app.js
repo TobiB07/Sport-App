@@ -20,9 +20,10 @@ const shortDate = s => fmtDate(s, { day: 'numeric', month: 'numeric' });
 const longDate = s => fmtDate(s, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const badge = (text, tone = '') => `<span class="badge ${tone}">${esc(text)}</span>`;
 const stars = n => '★'.repeat(n) + '☆'.repeat(3 - n);
-const paceInput = sec => (sec ? fmtTime(sec) : '');
 function sessionSummary(s) {
-  const parts = [fmtDur(s.durationMin)];
+  // sekundengenau, falls so eingetragen (52:30 statt „53 min“)
+  const sec = Math.round(s.durationMin * 60);
+  const parts = [sec % 60 ? `${fmtTime(sec)} ${sec >= 3600 ? 'h' : 'min'}` : fmtDur(s.durationMin)];
   if (s.distanceKm) {
     if (s.sport === 'swim') parts.push(`${Math.round(s.distanceKm * 1000)} m`, fmtSwim((s.durationMin * 60) / (s.distanceKm * 10)));
     else if (s.sport === 'bike') parts.push(`${fmtNum(s.distanceKm)} km`, fmtSpeed(s.distanceKm / (s.durationMin / 60)));
@@ -33,14 +34,49 @@ function sessionSummary(s) {
 }
 const typeLabel = s => TYPES[s.sport]?.[s.type] || '';
 
+// ---------- Zeitfelder ----------
+// Getrennte Kästchen für Std/Min/Sek: Die Zifferntastatur am Handy hat keinen Doppelpunkt.
+// Der Wert landet als "h:mm:ss" in einem versteckten Feld mit dem eigentlichen Namen.
+
+const pad2 = n => String(n).padStart(2, '0');
+const toHms = sec => `${Math.floor(sec / 3600)}:${pad2(Math.floor((sec % 3600) / 60))}:${pad2(sec % 60)}`;
+
+function timeField(name, sec, { hours = true, label = '', live = '' } = {}) {
+  const has = Number(sec) > 0;
+  sec = has ? Math.round(sec) : 0;
+  const h = Math.floor(sec / 3600), m = hours ? Math.floor((sec % 3600) / 60) : Math.floor(sec / 60), s = sec % 60;
+  const part = (p, v, ph) => `<input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="2"
+      data-part="${p}" value="${!has || (p === 'h' && !v) ? '' : p === 'h' ? v : pad2(v)}" placeholder="${ph}"
+      aria-label="${label ? `${label} – ` : ''}${{ h: 'Stunden', m: 'Minuten', s: 'Sekunden' }[p]}">`;
+  return `<div class="tfield">${label ? `<span class="tlabel">${label}</span>` : ''}
+    <div class="tparts">${hours ? `${part('h', h, 'Std')}<span>:</span>` : ''}${part('m', m, 'Min')}<span>:</span>${part('s', s, 'Sek')}</div>
+    <input type="hidden" name="${name}" value="${has ? toHms(sec) : ''}"${live ? ` data-live="${live}"` : ''}>
+  </div>`;
+}
+/** Kästchen → verstecktes Feld; gibt das versteckte Feld zurück. */
+function syncTimeField(part) {
+  const wrap = part.closest('.tfield'), hidden = wrap.querySelector('input[type=hidden]');
+  const v = p => Number(wrap.querySelector(`[data-part="${p}"]`)?.value.replace(/\D/g, '') || 0);
+  const sec = v('h') * 3600 + v('m') * 60 + v('s');
+  hidden.value = sec ? toHms(sec) : '';
+  return hidden;
+}
+/** Kommazahl lesen ("12,5" oder "12.5"); leer/ungültig → null. */
+const readNum = v => {
+  if (v == null || String(v).trim() === '') return null;
+  const n = Number(String(v).trim().replace(',', '.'));
+  return isFinite(n) ? n : null;
+};
+const decimalInput = (name, value, attrs = '') =>
+  `<input type="text" inputmode="decimal" name="${name}" value="${value == null ? '' : String(value).replace('.', ',')}" autocomplete="off" ${attrs}>`;
+
 // ---------- Triathlon: Zeiten je Disziplin ----------
 
 const TRI = ['swim', 'bike', 'run'];
 /** Eingabefelder Schwimmen/Rad/Laufen; `total` = Name des Gesamtzeit-Feldes im selben Formular. */
 function splitFields(prefix, total, splits = {}, show = true) {
   return `<div class="splits" data-prefix="${prefix}" data-total="${total}" ${show ? '' : 'hidden'}>
-    <div class="grid3">${TRI.map(k => `
-      <label>${SPORTS[k].icon} ${k === 'bike' ? 'Rad' : SPORTS[k].label}<input name="${prefix}_${k}" value="${paceInput(splits?.[k])}" inputmode="numeric" placeholder="${{ swim: '0:32:00', bike: '2:45:00', run: '1:50:00' }[k]}" data-time></label>`).join('')}
+    <div class="grid3">${TRI.map(k => timeField(`${prefix}_${k}`, splits?.[k], { label: `${SPORTS[k].icon} ${k === 'bike' ? 'Rad' : SPORTS[k].label}` })).join('')}
     </div>
     <p class="small muted trans"></p>
   </div>`;
@@ -170,7 +206,7 @@ function viewSetup(arg) {
             <p class="muted small">${longDate(r.date)} · ${esc(raceDef(r).label)}</p>
             <p class="small">Prognose heute: <strong>${fmtTime(g.pred.total)}</strong> · bis zum Wettkampf möglich: ≈ <strong>${fmtTime(g.potential)}</strong></p>
             ${g.pred.splits ? `<p class="small muted">Prognose je Disziplin: ${splitsText(g.pred.splits)} · Wechsel ${fmtTime(g.pred.splits.trans)}</p>` : ''}
-            <label>${r.sport === 'tri' ? 'Gesamtzeit' : 'Zielzeit'} (h:mm:ss)<input name="t_${r.id}" value="${paceInput(r.target)}" placeholder="${fmtTime(g.potential)}" inputmode="numeric" data-live="target" data-time></label>
+            ${timeField(`t_${r.id}`, r.target, { label: r.sport === 'tri' ? 'Gesamtzeit' : 'Zielzeit', live: 'target' })}
             <div class="live" id="live_${r.id}">${goalRatingHtml(g)}</div>
             ${r.sport === 'tri' ? splitFields(`t_${r.id}`, `t_${r.id}`, r.targetSplits) : ''}
           </div>`;
@@ -188,7 +224,7 @@ function profileFieldsA(p) {
       <label>Geschlecht<select name="sex">${[['w', 'weiblich'], ['m', 'männlich'], ['d', 'divers']].map(([v, l]) => `<option value="${v}" ${p.sex === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Geburtsjahr<input name="birthYear" type="number" min="1930" max="2020" value="${esc(p.birthYear)}" required></label>
       <label>Größe (cm)<input name="heightCm" type="number" min="120" max="230" value="${esc(p.heightCm)}"></label>
-      <label>Gewicht (kg)<input name="weightKg" type="number" step="0.1" min="30" max="200" value="${esc(p.weightKg)}"></label>
+      <label>Gewicht (kg)${decimalInput('weightKg', p.weightKg)}</label>
       <label>Ruhepuls <span class="opt">optional</span><input name="restHr" type="number" min="30" max="110" value="${esc(p.restHr)}"></label>
       <label>Max. Puls <span class="opt">optional</span><input name="maxHr" type="number" min="120" max="230" value="${esc(p.maxHr)}"></label>
     </div>
@@ -203,8 +239,8 @@ function profileFieldsB(p) {
     </fieldset>
     <fieldset><legend>Realistische Trainingszeit pro Woche</legend>
       <div class="grid2">
-        <label>von (Std.)<input name="hoursMin" type="number" min="1" max="30" step="0.5" value="${esc(p.hoursMin ?? 4)}" required></label>
-        <label>bis (Std.)<input name="hoursMax" type="number" min="1" max="30" step="0.5" value="${esc(p.hoursMax ?? 6)}" required></label>
+        <label>von (Std.)${decimalInput('hoursMin', p.hoursMin ?? 4, 'required')}</label>
+        <label>bis (Std.)${decimalInput('hoursMax', p.hoursMax ?? 6, 'required')}</label>
       </div>
       <p class="hint">Kein Plan – nur ein Richtwert, damit die Empfehlungen zu deinem Alltag passen.</p>
     </fieldset>
@@ -213,9 +249,9 @@ function profileFieldsB(p) {
     </fieldset>
     <fieldset><legend>Dein lockeres Wohlfühltempo <span class="opt">optional</span></legend>
       <div class="grid3">
-        <label>Laufen (min/km)<input name="runEasyPace" value="${paceInput(p.runEasyPace)}" placeholder="6:00" inputmode="numeric"></label>
-        <label>Rad (km/h)<input name="bikeEasySpeed" type="number" step="0.5" value="${esc(p.bikeEasySpeed)}" placeholder="26"></label>
-        <label>Schwimmen (/100 m)<input name="swimEasyPace" value="${paceInput(p.swimEasyPace)}" placeholder="2:15" inputmode="numeric"></label>
+        ${timeField('runEasyPace', p.runEasyPace, { hours: false, label: '🏃 Laufen – Zeit pro km' })}
+        <label>🚴 Rad – km/h${decimalInput('bikeEasySpeed', p.bikeEasySpeed, 'placeholder="26"')}</label>
+        ${timeField('swimEasyPace', p.swimEasyPace, { hours: false, label: '🏊 Schwimmen – Zeit pro 100 m' })}
       </div>
       <p class="hint">Das Tempo, bei dem du dich noch gut unterhalten kannst.</p>
     </fieldset>`;
@@ -223,13 +259,13 @@ function profileFieldsB(p) {
 
 function readProfile(fd, base = {}) {
   const p = { ...base };
-  const num = k => (fd.get(k) === '' || fd.get(k) == null ? null : Number(fd.get(k)));
+  const num = k => readNum(fd.get(k));
   if (fd.has('name')) Object.assign(p, {
     name: fd.get('name').trim(), sex: fd.get('sex'), birthYear: num('birthYear'), heightCm: num('heightCm'),
     weightKg: num('weightKg'), restHr: num('restHr'), maxHr: num('maxHr'),
   });
   if (fd.has('hoursMin')) {
-    const lo = num('hoursMin'), hi = num('hoursMax');
+    const lo = num('hoursMin') ?? 4, hi = num('hoursMax') ?? lo + 2;
     Object.assign(p, {
       level: fd.get('level') || 'fortgeschritten', hoursMin: Math.min(lo, hi), hoursMax: Math.max(lo, hi),
       sports: Object.fromEntries(Object.keys(SPORTS).map(k => [k, fd.get(`sp_${k}`) === 'on'])),
@@ -465,10 +501,10 @@ function raceModal(id, setup = !state.onboarded) {
       <fieldset><legend>Priorität</legend>${Object.entries(PRIORITIES).map(([k, p]) => `
         <label class="choice"><input type="radio" name="priority" value="${k}" ${r.priority === k ? 'checked' : ''}><span><strong>${p.label}</strong><small>${p.hint}</small></span></label>`).join('')}</fieldset>
       ${setup ? '' : `<fieldset><legend>Ziel <span class="opt">optional</span></legend>
-        <label>Gesamtzeit (h:mm:ss)<input name="target" value="${paceInput(r.target)}" inputmode="numeric" placeholder="1:45:00" data-time></label>
+        ${timeField('target', r.target, { label: 'Gesamtzeit' })}
         ${splitFields('target', 'target', r.targetSplits, r.sport === 'tri')}</fieldset>`}
       ${past ? `<fieldset><legend>Ergebnis</legend>
-        <label>Gesamtzeit (h:mm:ss)<input name="resultTime" value="${paceInput(r.resultTime)}" inputmode="numeric" data-time></label>
+        ${timeField('resultTime', r.resultTime, { label: 'Gesamtzeit' })}
         ${splitFields('result', 'resultTime', r.resultSplits, r.sport === 'tri')}</fieldset>` : ''}
       <div class="row-between">
         ${r.id ? `<button type="button" class="btn danger" data-action="delete" data-list="races" data-id="${r.id}">Löschen</button>` : '<span></span>'}
@@ -485,7 +521,7 @@ function resultModal(id) {
       <input type="hidden" name="id" value="${esc(r.id)}">
       <label>Sportart<select name="sport" data-rerender="distance">${Object.entries(RACES).map(([k, s]) => `<option value="${k}" ${k === r.sport ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}</select></label>
       <label>Distanz<select name="distance" id="distance">${distanceOptions(r.sport, r.distance)}</select></label>
-      <label>Gesamtzeit (h:mm:ss)<input name="time" value="${paceInput(r.time)}" required inputmode="numeric" placeholder="0:48:30" data-time></label>
+      ${timeField('time', r.time, { label: 'Gesamtzeit' })}
       ${splitFields('res', 'time', r.splits, r.sport === 'tri')}
       <label>Wann? <span class="opt">ungefähr reicht</span><input type="date" name="date" value="${esc(r.date)}" max="${today()}"></label>
       <div class="row-between">
@@ -516,8 +552,8 @@ function logModal(ds) {
       <div class="grid2">
         <label>Datum<input type="date" name="date" value="${s.date}" max="${today()}" required></label>
         <label>Art<select name="type" id="type">${typeOptions(s.sport, s.type)}</select></label>
-        <label>Dauer (min)<input type="number" name="durationMin" min="1" max="900" value="${esc(s.durationMin)}" required></label>
-        <label id="distLabel" ${s.sport === 'strength' ? 'hidden' : ''}><span>${s.sport === 'swim' ? 'Distanz (m)' : 'Distanz (km)'}</span><input type="number" name="distance" step="0.01" min="0" value="${s.distanceKm ? (s.sport === 'swim' ? Math.round(s.distanceKm * 1000) : s.distanceKm) : ''}"></label>
+        ${timeField('duration', s.durationMin ? s.durationMin * 60 : null, { label: 'Dauer' })}
+        <label id="distLabel" ${s.sport === 'strength' ? 'hidden' : ''}><span>${s.sport === 'swim' ? 'Distanz (m)' : 'Distanz (km)'}</span>${decimalInput('distance', s.distanceKm ? (s.sport === 'swim' ? Math.round(s.distanceKm * 1000) : s.distanceKm) : null)}</label>
         <label>Ø Puls <span class="opt">optional</span><input type="number" name="avgHr" min="60" max="220" value="${esc(s.avgHr)}"></label>
       </div>
       <label>Gefühl: <b id="rpeOut">${rpe} – ${RPE_LABELS[rpe]}</b><input type="range" name="rpe" min="1" max="10" value="${rpe}" data-live="rpe"></label>
@@ -806,7 +842,7 @@ const forms = {
   },
   result: (fd, form) => {
     const time = readTime(form.elements.time);
-    if (!time) return toast('Bitte Zeit als h:mm:ss angeben'), false;
+    if (!time) return toast('Bitte die Zeit eintragen'), false;
     const splits = fd.get('sport') === 'tri' ? readSplits(form, 'res') : null;
     const err = splitError(time, splits);
     if (err) return toast(err), false;
@@ -814,11 +850,13 @@ const forms = {
     closeModal();
   },
   session: fd => {
-    const sport = fd.get('sport'), dist = Number(fd.get('distance')) || null;
+    const sport = fd.get('sport'), dist = readNum(fd.get('distance')) || null;
+    const dur = parseTime(fd.get('duration'));
+    if (!dur) return toast('Bitte die Dauer eintragen'), false;
     const old = state.sessions.find(s => s.id === fd.get('id')) || {};
     upsert('sessions', {
       ...old, id: fd.get('id') || undefined, date: fd.get('date'), sport, type: fd.get('type'),
-      durationMin: Number(fd.get('durationMin')), distanceKm: dist && sport === 'swim' ? dist / 1000 : sport === 'strength' ? null : dist,
+      durationMin: Math.round((dur / 60) * 100) / 100, distanceKm: dist && sport === 'swim' ? dist / 1000 : sport === 'strength' ? null : dist,
       rpe: Number(fd.get('rpe')), avgHr: Number(fd.get('avgHr')) || null, notes: fd.get('notes').trim(),
     });
     closeModal(); toast('Eingetragen 💪');
@@ -876,12 +914,6 @@ document.addEventListener('change', e => {
     lbl.hidden = t.value === 'strength';
     lbl.querySelector('span').textContent = t.value === 'swim' ? 'Distanz (m)' : 'Distanz (km)';
   }
-  // Zeitfelder nach der Eingabe eindeutig als h:mm:ss / m:ss anzeigen
-  if (t.dataset.time !== undefined) {
-    const v = readTime(t);
-    if (v) t.value = fmtTime(v);
-    updateTransitions(t.form);
-  }
   if (t.id === 'importFile' && t.files[0]) {
     t.files[0].text().then(txt => {
       try {
@@ -894,7 +926,17 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('input', e => {
-  const t = e.target;
+  let t = e.target;
+  if (t.dataset.part) {
+    const digits = t.value.replace(/\D/g, '');
+    if (digits !== t.value) t.value = digits;
+    // nach 2 Ziffern ins nächste Kästchen springen
+    if (digits.length >= 2) {
+      const parts = [...t.closest('.tparts').querySelectorAll('[data-part]')];
+      parts[parts.indexOf(t) + 1]?.focus();
+    }
+    t = syncTimeField(t);
+  }
   if (t.form?.querySelector('.splits')) updateTransitions(t.form);
   if (t.dataset.live === 'rpe') $('#rpeOut').textContent = `${t.value} – ${RPE_LABELS[t.value]}`;
   if (t.dataset.live === 'target') {
@@ -903,6 +945,9 @@ document.addEventListener('input', e => {
     $(`#live_${r.id}`).innerHTML = goalRatingHtml(g);
   }
 });
+
+// Beim Antippen eines Zeitkästchens Inhalt markieren → direkt überschreibbar
+document.addEventListener('focusin', e => { if (e.target.dataset?.part) e.target.select(); });
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalEl.hidden) closeModal(); });
 

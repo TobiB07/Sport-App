@@ -1,6 +1,6 @@
 // Offline-Fähigkeit: App-Dateien beim Installieren vorladen,
 // danach erst Netz (aktuellste Version), bei Fehler aus dem Cache.
-const CACHE = 'sportapp-v2';
+const CACHE = 'sportapp-v3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/engine.js', 'js/data.js', 'js/store.js', 'js/util.js',
